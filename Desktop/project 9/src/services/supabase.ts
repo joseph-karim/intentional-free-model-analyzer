@@ -1,6 +1,41 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from '../types/supabase';
 
+// Get the current site URL for redirects
+const configuredSiteUrl = import.meta.env.VITE_SITE_URL;
+const isDevelopment = import.meta.env.DEV;
+const netlifyUrl = 'https://animated-druid-260eae.netlify.app';
+const customDomain = 'https://insights.reviveagent.com';
+const localUrl = window.location.origin;
+
+// Priority order: 
+// 1. Environment variable VITE_SITE_URL if set
+// 2. Current origin if it contains one of our known domains
+// 3. Custom domain in production, Netlify URL as fallback
+// 4. Local development URL
+const currentOrigin = window.location.origin;
+const isKnownProductionDomain = 
+  currentOrigin.includes('reviveagent.com') || 
+  currentOrigin.includes('animated-druid-260eae.netlify.app');
+
+// Ensure the site URL is properly formatted
+let siteUrl = configuredSiteUrl || 
+  (isKnownProductionDomain ? currentOrigin : 
+    isDevelopment ? localUrl : customDomain);
+
+// Make sure the URL doesn't have trailing slashes
+if (siteUrl.endsWith('/')) {
+  siteUrl = siteUrl.slice(0, -1);
+}
+
+// Log all URL information for debugging
+console.log(`Auth URL Debug Information:`);
+console.log(`- Configured site URL: ${configuredSiteUrl}`);
+console.log(`- Current origin: ${currentOrigin}`);
+console.log(`- Is known production domain: ${isKnownProductionDomain}`);
+console.log(`- Is development: ${isDevelopment}`);
+console.log(`- Final site URL for auth redirects: ${siteUrl}`);
+
 if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
   throw new Error('Missing Supabase environment variables');
 }
@@ -13,21 +48,28 @@ export const supabase = createClient<Database>(
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: true,
-      storage: localStorage
+      storage: localStorage,
+      flowType: 'pkce',
+      site_url: siteUrl,
+      redirectTo: `${siteUrl}/auth/callback`
     }
   }
 );
 
 export async function signInWithGoogle() {
   try {
+    // Get the current origin
+    console.log('Redirecting to:', siteUrl);
+    
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: window.location.origin,
+        redirectTo: `${siteUrl}/auth/callback`,
         queryParams: {
           access_type: 'offline',
-          prompt: 'consent'
-        }
+          prompt: 'consent',
+        },
+        skipBrowserRedirect: false, // Ensure direct browser redirect
       }
     });
     
@@ -36,6 +78,7 @@ export async function signInWithGoogle() {
       throw error;
     }
     
+    console.log('Auth response:', data);
     return data;
   } catch (error) {
     console.error('Unexpected error during Google sign-in:', error);
@@ -202,4 +245,53 @@ export async function unshareAnalysis(id: string) {
     .eq('id', id);
 
   if (error) throw error;
+}
+
+// Function to send password reset email
+export async function sendPasswordResetEmail(email: string) {
+  try {
+    console.log('Sending password reset email to:', email);
+    console.log('Using redirect URL:', `${siteUrl}/auth/callback?type=recovery`);
+    
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${siteUrl}/auth/callback?type=recovery`
+    });
+
+    if (error) {
+      console.error('Password reset error:', error);
+      throw error;
+    }
+
+    console.log('Password reset email sent successfully');
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending password reset email:', error);
+    throw error;
+  }
+}
+
+// Function to send magic link
+export async function sendMagicLink(email: string) {
+  try {
+    console.log('Sending magic link to:', email);
+    console.log('Using redirect URL:', `${siteUrl}/auth/callback?type=magiclink`);
+    
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: `${siteUrl}/auth/callback?type=magiclink`
+      }
+    });
+
+    if (error) {
+      console.error('Magic link error:', error);
+      throw error;
+    }
+
+    console.log('Magic link sent successfully');
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending magic link:', error);
+    throw error;
+  }
 }
